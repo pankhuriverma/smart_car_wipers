@@ -1,0 +1,97 @@
+import cv2
+import sys
+sys.path.append("../tools")
+import numpy as np
+import utils as u
+import tflite_runtime.interpreter as tflite
+#import time
+# Import the parser library
+import argparse
+
+# img size
+image_size = 256
+font = cv2.FONT_HERSHEY_SIMPLEX
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--save', help='save video stream to output file', action='store_true')
+parser.add_argument('--output', help='output file name', default='output.avi')
+args = parser.parse_args()
+
+# Load TensorFlow Lite model
+tflite_model_path = "../weights/tflite_new_model1.tflite"
+interpreter = tflite.Interpreter(model_path = tflite_model_path,
+                                 experimental_delegates=[tflite.load_delegate('libedgetpu.so.1')])
+interpreter.allocate_tensors()
+
+# Get input and output details
+input_tensor = interpreter.get_input_details()
+output_tensor = interpreter.get_output_details()
+
+# Open video capture
+cap = cv2.VideoCapture(0)
+
+# Set video dimensions
+fps = int(cap.get(cv2.CAP_PROP_FPS))
+
+if args.save:
+    # Set video codec and frame rate
+    fourcc = cv2.VideoWriter_fourcc(*"XVID")  # Other codecs also possible, e.g. XVID
+    # Create VideoWriter object to write video frames
+    out = cv2.VideoWriter(args.output, fourcc, 10, (int(cap.get(3)), int(cap.get(4))))
+
+
+
+
+while cap.isOpened():
+    # Read frame from video capture
+    ret, frame = cap.read()
+    if ret:
+        
+
+        h, w, _ = frame.shape
+
+        if args.save:
+                out.write(frame)
+
+        ori_frame = frame
+
+        # Convert to PIL Image
+        frame = u.read_image_tflite(frame, image_size)
+        input_data = np.array(frame, dtype=np.float32)
+        interpreter.set_tensor(input_tensor[0]['index'], input_data)
+
+        #time_before = time()
+        interpreter.invoke()
+        #time_after = time()
+
+        #total_tflite_time = time_after - time_before
+        #print("Total prediction time for tflite without opt model is: ", total_tflite_time)
+
+        output_data_tflite = interpreter.get_tensor(output_tensor[0]['index'])
+
+        # Post-process output
+        pred = output_data_tflite
+        mask = u.mask_parse(pred, w, h)
+        area_ratio = round(u.area_ratio_calculate(mask),2)
+        print(area_ratio)
+        #print('Percentage: {:.2%}'.format(area_ratio / 100))
+
+        res1 = u.video_overlay_creation(mask, ori_frame)
+
+        # Put area ration in the video stream
+        cv2.putText(res1, "Percentage:" , (0, 30), font, 0.5, (0, 0, 0))
+        cv2.putText(res1, str(area_ratio), (100, 30), font, 0.5, (0, 0, 0))
+        cv2.putText(res1, "%", (145, 30), font, 0.5, (0, 0, 0))
+
+        # Display segmented frame
+        cv2.imshow("Segmented Frame", res1)
+        if cv2.waitKey(1) == ord("x") or cv2.getWindowProperty('Segmented Frame', 1) < 0:
+                break
+
+    else:
+        break
+
+# Release resources
+cap.release()
+out.release()
+cv2.destroyAllWindows()
